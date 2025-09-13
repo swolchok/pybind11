@@ -302,10 +302,13 @@ struct internals {
 // impact any other modules, because the only things accessing the local internals is the
 // module that contains them.
 struct local_internals {
+    local_internals();
     type_map<type_info *> registered_types_cpp;
     std::forward_list<ExceptionTranslator> registered_exception_translators;
     PyTypeObject *function_record_py_type = nullptr;
 };
+
+PYBIND11_NOINLINE local_internals::local_internals() {}
 
 enum class holder_enum_t : uint8_t {
     undefined,
@@ -510,24 +513,11 @@ public:
     std::unique_ptr<InternalsType> *get_pp() {
 #ifdef PYBIND11_HAS_SUBINTERPRETER_SUPPORT
         if (get_num_interpreters_seen() > 1) {
-            // Whenever the interpreter changes on the current thread we need to invalidate the
-            // internals_pp so that it can be pulled from the interpreter's state dict.  That is
-            // slow, so we use the current PyThreadState to check if it is necessary.
-            auto *tstate = get_thread_state_unchecked();
-            if (!tstate || tstate->interp != last_istate_.get()) {
-                gil_scoped_acquire_simple gil;
-                if (!tstate) {
-                    tstate = get_thread_state_unchecked();
-                }
-                last_istate_ = tstate->interp;
-                internals_tls_p_ = get_or_create_pp_in_state_dict();
-            }
-            return internals_tls_p_.get();
+            return get_pp_multiple_interpreters_slow_path();
         }
 #endif
         if (!internals_singleton_pp_) {
-            gil_scoped_acquire_simple gil;
-            internals_singleton_pp_ = get_or_create_pp_in_state_dict();
+            internals_singleton_pp_ = get_or_create_pp_in_state_dict_unlocked();
         }
         return internals_singleton_pp_;
     }
@@ -564,6 +554,27 @@ public:
     }
 
 private:
+    PYBIND11_NOINLINE std::unique_ptr<InternalsType> *get_pp_multiple_interpreters_slow_path() {
+        // Whenever the interpreter changes on the current thread we need to invalidate the
+        // internals_pp so that it can be pulled from the interpreter's state dict.  That is
+        // slow, so we use the current PyThreadState to check if it is necessary.
+        auto *tstate = get_thread_state_unchecked();
+        if (!tstate || tstate->interp != last_istate_.get()) {
+            gil_scoped_acquire_simple gil;
+            if (!tstate) {
+                tstate = get_thread_state_unchecked();
+            }
+            last_istate_ = tstate->interp;
+            internals_tls_p_ = get_or_create_pp_in_state_dict();
+        }
+        return internals_tls_p_.get();
+    }
+
+    PYBIND11_NOINLINE std::unique_ptr<InternalsType> *get_or_create_pp_in_state_dict_unlocked() {
+        gil_scoped_acquire_simple gil;
+        return get_or_create_pp_in_state_dict();
+    }
+
     std::unique_ptr<InternalsType> *get_or_create_pp_in_state_dict() {
         error_scope err_scope;
         dict state_dict = get_python_state_dict();
