@@ -649,7 +649,7 @@ PYBIND11_NOINLINE internals &get_internals() {
     return *internals_ptr;
 }
 
-inline internals_pp_manager<local_internals> &get_local_internals_pp_manager() {
+inline internals_pp_manager<local_internals> &init_local_internals_pp_manager_ref() {
     // Use the address of this static itself as part of the key, so that the value is uniquely tied
     // to where the module is loaded in memory
     static const std::string this_module_idstr
@@ -658,6 +658,11 @@ inline internals_pp_manager<local_internals> &get_local_internals_pp_manager() {
     static internals_pp_manager<local_internals> local_internals_pp_manager(
         this_module_idstr.c_str(), nullptr);
     return local_internals_pp_manager;
+}
+
+inline internals_pp_manager<local_internals> &get_local_internals_pp_manager() {
+    static internals_pp_manager<local_internals> &ref = init_local_internals_pp_manager_ref();
+    return ref;
 }
 
 /// Works like `get_internals`, but for things which are locally registered.
